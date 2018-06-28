@@ -4,7 +4,6 @@
 
 package akka.persistence.cassandra.journal
 
-import scala.collection.immutable
 import java.lang.{ Long => JLong }
 import java.nio.ByteBuffer
 import java.util.{ UUID, HashMap => JHMap, Map => JMap }
@@ -21,31 +20,31 @@ import akka.persistence.cassandra.query.scaladsl.CassandraReadJournal
 import akka.persistence.cassandra.session.scaladsl.CassandraSession
 import akka.persistence.journal.{ AsyncWriteJournal, Tagged }
 import akka.persistence.query.PersistenceQuery
-import akka.serialization.{ Serialization, SerializationExtension }
+import akka.serialization.{ AsyncSerializer, Serialization, SerializationExtension }
 import akka.stream.ActorMaterializer
+import akka.util.OptionVal
 import com.datastax.driver.core._
 import com.datastax.driver.core.exceptions.DriverException
 import com.datastax.driver.core.policies.RetryPolicy.RetryDecision
 import com.datastax.driver.core.policies.{ LoggingRetryPolicy, RetryPolicy }
 import com.datastax.driver.core.utils.{ Bytes, UUIDs }
 import com.typesafe.config.Config
-import scala.collection.immutable.Seq
+
 import scala.collection.JavaConverters._
+import scala.collection.immutable
+import scala.collection.immutable.Seq
 import scala.concurrent._
 import scala.util.control.NonFatal
 import scala.util.{ Failure, Success, Try }
-
-import akka.serialization.AsyncSerializer
-import akka.util.OptionVal
 
 class CassandraJournal(cfg: Config) extends AsyncWriteJournal
   with CassandraRecovery
   with CassandraStatements
   with NoSerializationVerificationNeeded {
 
-  private[akka] val config = new CassandraJournalConfig(context.system, cfg)
-  private[akka] val serialization = SerializationExtension(context.system)
-  private[akka] val log: LoggingAdapter = Logging(context.system, getClass)
+  val config = new CassandraJournalConfig(context.system, cfg)
+  val serialization = SerializationExtension(context.system)
+  val log: LoggingAdapter = Logging(context.system, getClass)
 
   import CassandraJournal._
   import config._
@@ -168,7 +167,7 @@ class CassandraJournal(cfg: Config) extends AsyncWriteJournal
     }
 
     val writesWithUuids: Seq[Seq[(PersistentRepr, UUID)]] = messages
-      .map(aw => aw.payload.map(pr => (pr, UUIDs.timeBased())))
+      .map(aw => aw.payload.map(pr => (pr, generateUUID(pr))))
 
     val p = Promise[Done]
     val pid = messages.head.persistenceId
@@ -204,6 +203,8 @@ class CassandraJournal(cfg: Config) extends AsyncWriteJournal
     //Nil == all good
     tws.map(_ => Nil)(akka.dispatch.ExecutionContexts.sameThreadExecutionContext)
   }
+
+  protected def generateUUID(pr: PersistentRepr): UUID = UUIDs.timeBased()
 
   private def extractTagWrites(serialized: Seq[SerializedAtomicWrite]): BulkTagWrite = {
     if (serialized.isEmpty) BulkTagWrite(Nil, Nil)
